@@ -155,7 +155,7 @@ class Car1DEnv0(gym.Env):
 class Car1DEnv1(Car1DEnv0):
     initial_x_pos = 0.
     target_x_pos = 100.
-    simulation_timestep = 0.1
+    simulation_timestep = 1.0
     current_x_pos = 0.
     current_x_vel = 0.
     current_x_acc = 0.
