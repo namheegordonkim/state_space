@@ -154,13 +154,13 @@ def main(args):
     # We use PPO by default, but it should be easy to swap out for other algorithms.
     if args.pretrained_path is not None:
         pretrained_path = args.pretrained_path
-        learner = PPO.load(pretrained_path, envs)
-        learner.learn(total_timesteps=10000000, callback=callback)
+        learner = PPO.load(pretrained_path, envs, device=args.device)
+        learner.learn(total_timesteps=args.total_timesteps, callback=callback)
     else:
         policy_kwargs = dict(
             activation_fn=nn.ReLU,
             net_arch=[dict(
-                vf=args.policy_dims,
+                vf=args.value_dims,
                 pi=args.policy_dims
             )
             ],
@@ -168,7 +168,7 @@ def main(args):
             squash_output=False
 
         )
-        learner = PPO(MlpPolicy, envs, n_steps=args.n_steps, verbose=1, policy_kwargs=policy_kwargs)
+        learner = PPO(MlpPolicy, envs, n_steps=args.n_steps, verbose=1, policy_kwargs=policy_kwargs, device=args.device)
         learner.learn(total_timesteps=args.total_timesteps, callback=callback)
 
     render_env.close()
@@ -185,7 +185,8 @@ if __name__ == "__main__":
                         type=int)
     parser.add_argument("--total_timesteps", help="Total timesteps to train with PPO", required=True,
                         type=int)
-    parser.add_argument("--policy_dims", nargs='+', type=int, required=True)
+    parser.add_argument("--policy_dims", help="Hidden layers for policy network", nargs='+', type=int, required=True)
+    parser.add_argument("--value_dims", help="Hidden layers for value predictor network", nargs='+', type=int, required=True)
     parser.add_argument("--eval_every", help="Evaluate current policy every eval_every episodes", required=True,
                         type=int)
     parser.add_argument("--pretrained_path", help="Path to the pretrained policy zip file, if any", type=str)
@@ -193,5 +194,6 @@ if __name__ == "__main__":
     parser.add_argument("--log_std_init", help="Initial Gaussian policy exploration level", type=float, default=-2.0)
     parser.add_argument("--debug", help="Set true to disable parallel processing and run debugging programs",
                         action="store_true")
+    parser.add_argument("--device", help="Device option for stable baselines algorithms", default="auto")
     args = parser.parse_args()
     main(args)

@@ -16,6 +16,12 @@ os.sys.path.append(parent_dir)
 
 register(
     id="Car1DEnv-v0",
-    entry_point="envs.toy_envs:Car1DEnv",
+    entry_point="envs.toy_envs:Car1DEnv0",
     max_episode_steps=1000,
+)
+
+register(
+    id="Car1DEnv-v1",
+    entry_point="envs.toy_envs:Car1DEnv1",
+    max_episode_steps=200,
 )

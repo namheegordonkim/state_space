@@ -68,8 +68,6 @@ class MultiLayerPerceptron(nn.Module):
         layer_dims: np.ndarray = np.array([input_dim, *hidden_dims, output_dim])
         for dim1, dim2 in zip(layer_dims, layer_dims[1:]):
             fc = nn.Linear(dim1, dim2)
-            # randomize the weights
-            nn.init.normal(fc.weight, mean=0.0, std=1.0)
             self.fcs.append(fc)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

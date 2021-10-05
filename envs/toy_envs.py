@@ -6,13 +6,14 @@ import pygame
 from gym.spaces import Box
 
 
-class Car1DEnv(gym.Env):
+class Car1DEnv0(gym.Env):
     initial_x_pos = 0.
     target_x_pos = 100.
     simulation_timestep = 0.1
     current_x_pos = 0.
     current_x_vel = 0.
     current_x_acc = 0.
+    max_x_vel = 3.
     rewards = {"distance_reward": 0., "action_penalty": 0.}
     screen_size = (640, 480)
 
@@ -48,19 +49,22 @@ class Car1DEnv(gym.Env):
         self.current_x_acc = float(action)
         # Very simple example simulation
         self.current_x_vel += self.current_x_acc
-        self.current_x_pos += self.simulation_timestep * self.current_x_vel
+        self.current_x_vel = np.clip(self.current_x_vel, -self.max_x_vel, self.max_x_vel)
         next_state = self._get_obs()
 
         # Compute reward
         distance_to_target = self.target_x_pos - self.current_x_pos
         distance_penalty = np.abs(distance_to_target)
-        distance_reward = np.exp(-1e-1 * distance_penalty)  # 1 when distance is 0
-        action_penalty = 1 - np.exp(-(self.current_x_acc ** 2))
+        distance_reward = 1 - 1e-2 * distance_penalty  # 1 when distance is 0
+        action_penalty = np.abs(self.current_x_acc)
+        max_x_vel_penalty = 0
+        if np.abs(np.abs(self.current_x_vel) - self.max_x_vel) < 1e-3:
+            max_x_vel_penalty = 1
         self.rewards = {
             "distance_reward": distance_reward,
             "action_penalty": action_penalty
         }
-        reward = distance_reward - action_penalty
+        reward = distance_reward - 1e-3 * action_penalty - 1e-2 * max_x_vel_penalty
 
         # Failure condition
         # None; Timeout limit is determined in __init__.py
@@ -146,3 +150,51 @@ class Car1DEnv(gym.Env):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 sys.exit()
+
+
+class Car1DEnv1(Car1DEnv0):
+    initial_x_pos = 0.
+    target_x_pos = 100.
+    simulation_timestep = 0.1
+    current_x_pos = 0.
+    current_x_vel = 0.
+    current_x_acc = 0.
+    max_x_vel = 100.
+    rewards = {"distance_reward": 0., "action_penalty": 0.}
+    screen_size = (640, 480)
+
+    def step(self, action):
+        """
+        Action is the acceleration of the car.
+        Apply the dynamics equations, weighted by simulation timestep:
+        position = position + (velocity * dt) + 1/2 * (acceleration * dt^2)
+        velocity = velocity + (acceleration * dt)
+        """
+        # Compute next state
+        self.current_x_acc = float(action)
+        # Very simple example simulation
+        self.current_x_pos += self.simulation_timestep * self.current_x_vel + 0.5 * self.simulation_timestep ** 2 * self.current_x_acc
+        self.current_x_vel += self.simulation_timestep * self.current_x_acc
+        self.current_x_vel = np.clip(self.current_x_vel, -self.max_x_vel, self.max_x_vel)
+        next_state = self._get_obs()
+
+        # Compute reward
+        distance_to_target = self.target_x_pos - self.current_x_pos
+        distance_penalty = np.abs(distance_to_target)
+        distance_reward = 1 - 1e-2 * distance_penalty  # 1 when distance is 0
+        action_penalty = np.abs(self.current_x_acc)
+        max_x_vel_penalty = 0
+        if np.abs(np.abs(self.current_x_vel) - self.max_x_vel) < 1e-3:
+            max_x_vel_penalty = 1
+        self.rewards = {
+            "distance_reward": distance_reward,
+            "action_penalty": action_penalty
+        }
+        reward = distance_reward - 1e-3 * action_penalty - 1e-2 * max_x_vel_penalty
+
+        # Failure condition
+        # None; Timeout limit is determined in __init__.py
+        done = False
+        info = {}
+        return next_state, reward, done, info
+
