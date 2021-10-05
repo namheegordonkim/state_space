@@ -3,9 +3,9 @@ python train.py \
 --project_name car1d \
 --run_name scratch \
 --env envs:Car1DEnv-v0 \
---eval_every 10000 \
+--eval_every 1000 \
 --log_std_init -1.0 \
---total_timesteps 10000000 \
+--total_timesteps 100000 \
 --n_steps 1000 \
 --policy_dims 2 2 \
 --value_dims 16 16
@@ -15,13 +15,13 @@ python train.py \
 --project_name car1d \
 --run_name scratch \
 --env envs:Car1DEnv-v1 \
---eval_every 10000 \
+--eval_every 1000 \
 --log_std_init -1.0 \
---total_timesteps 10000000 \
+--total_timesteps 100000 \
 --n_steps 200 \
---policy_dims 2 2 \
+--policy_dims 64 64 \
 --value_dims 64 64 \
---device cpu
+--device auto
 
 # After training, appropriate directories are created under checkpoints
 python enjoy.py \
