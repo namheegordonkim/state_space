@@ -73,7 +73,7 @@ def main(args):
 
     plt.figure()
     plt.imshow(grid_z, extent=[-10, 110, -3, 3], aspect='auto')
-    plt.title("State Space Visualized with 4 Neurons")
+    plt.title("State Space Visualized")
     plt.xlabel("$x$")
     plt.ylabel("$\\dot x$")
     plt.show()
