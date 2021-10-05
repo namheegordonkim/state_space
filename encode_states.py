@@ -59,8 +59,9 @@ def main(args):
     binary_embeddings_layer2 = policy_latents_tensor_layer2_activated > 0
     binary_embeddings_layer2 = binary_embeddings_layer2.cpu().detach().numpy()
 
-    binary_embeddings = np.concatenate([binary_embeddings_layer1, binary_embeddings_layer2], axis=1).astype(np.int)
-    integer_embeddings = np.packbits(binary_embeddings, axis=1, bitorder="little").reshape(-1)
+    binary_embeddings = np.concatenate([binary_embeddings_layer1, binary_embeddings_layer2], axis=1).astype(int)
+    integer_embeddings = np.packbits(binary_embeddings, axis=1, bitorder="little")
+    integer_embeddings = np.sum(integer_embeddings, axis=1)  # to allow arbitrary number of bits
 
     # convert raw integer embeddings to 0, 1, 2, 3...
     # fast rendering of state cells via grid interpolation
