@@ -14,6 +14,11 @@ python train.py \
 
 python enjoy.py \
 --env envs:Car1DEnv-v1 \
+--policy_path checkpoints/car1d_scratch/best.zip \
+--stats_path checkpoints/car1d_scratch/best_stats.pth
+
+python enjoy.py \
+--env envs:Car1DEnv-v1 \
 --policy_path checkpoints/car1d_scratch/latest.zip \
 --stats_path checkpoints/car1d_scratch/latest_stats.pth
 
@@ -21,3 +26,8 @@ python encode_states.py \
 --env envs:Car1DEnv-v0 \
 --policy_path checkpoints/car1d_scratch/best.zip \
 --stats_path checkpoints/car1d_scratch/best_stats.pth
+
+python encode_states.py \
+--env envs:Car1DEnv-v0 \
+--policy_path checkpoints/car1d_scratch/latest.zip \
+--stats_path checkpoints/car1d_scratch/latest_stats.pth
