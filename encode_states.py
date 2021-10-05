@@ -3,6 +3,8 @@ from argparse import ArgumentParser
 import gym
 import numpy as np
 import torch
+from colorhash import ColorHash
+from scipy.interpolate import griddata
 from stable_baselines3 import PPO
 from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
@@ -33,14 +35,14 @@ def main(args):
     env.training = False
 
     states = []
-    for i in np.arange(-100, 300):
-        for j in np.arange(-3, 3, 0.1):
+    for i in np.arange(-10, 110):
+        for j in np.arange(-3, 3, 0.05):
             states.append([i, j])
     states = np.stack(states)
     states_scaled = env.normalize_obs(states)
     states_tensor = torch.as_tensor(states_scaled).float()
 
-    policy: ActorCriticPolicy = expert.policy
+    policy: ActorCriticPolicy = expert.policy.cpu()
     true_actions_tensor, _, _ = policy.forward(states_tensor, deterministic=True)
     features_tensor = policy.features_extractor.forward(states_tensor)
     shared_latents_tensor = policy.mlp_extractor.shared_net.forward(features_tensor)
@@ -59,14 +61,18 @@ def main(args):
 
     binary_embeddings = np.concatenate([binary_embeddings_layer1, binary_embeddings_layer2], axis=1).astype(np.int)
     integer_embeddings = np.packbits(binary_embeddings, axis=1, bitorder="little").reshape(-1)
-    # convert raw integer embeddings to 0, 1, 2, 3...
-    unique_embeddings = np.unique(integer_embeddings).tolist()
-    ordered_embeddings = np.asarray([unique_embeddings.index(i) for i in integer_embeddings], dtype=np.int)
 
-    color_map = ["C{:d}".format(i) for i in ordered_embeddings]  # "C0", "C1", "C2", ...
+    # convert raw integer embeddings to 0, 1, 2, 3...
+    # fast rendering of state cells via grid interpolation
+    grid_x, grid_y = np.mgrid[-10:110:1000j, -3:3:1000j]
+    z = griddata((states[:, 0], states[:, 1]), integer_embeddings, (grid_x, grid_y), method='nearest')
+
+    # convert raw integer
+    convert_raw_integer_to_colorhash = np.vectorize(lambda x: ColorHash(x).rgb)
+    grid_z = np.array(convert_raw_integer_to_colorhash(z)).swapaxes(0, 1).swapaxes(1, 2)
 
     plt.figure()
-    plt.scatter(states[:, 0], states[:, 1], s=1, c=color_map)
+    plt.imshow(grid_z, extent=[-10, 110, -3, 3], aspect='auto')
     plt.title("State Space Visualized with 4 Neurons")
     plt.xlabel("$x$")
     plt.ylabel("$\\dot x$")

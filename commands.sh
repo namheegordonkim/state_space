@@ -8,9 +8,9 @@ python train.py \
 --log_std_init -1.0 \
 --total_timesteps 240000 \
 --n_steps 200 \
---policy_dims 256 256 \
+--policy_dims 4 4 \
 --value_dims 256 256 \
---device auto
+--device cpu
 
 python enjoy.py \
 --env envs:Car1DEnv-v1 \
@@ -23,11 +23,11 @@ python enjoy.py \
 --stats_path checkpoints/car1d_scratch/latest_stats.pth
 
 python encode_states.py \
---env envs:Car1DEnv-v0 \
+--env envs:Car1DEnv-v1 \
 --policy_path checkpoints/car1d_scratch/best.zip \
 --stats_path checkpoints/car1d_scratch/best_stats.pth
 
 python encode_states.py \
---env envs:Car1DEnv-v0 \
+--env envs:Car1DEnv-v1 \
 --policy_path checkpoints/car1d_scratch/latest.zip \
 --stats_path checkpoints/car1d_scratch/latest_stats.pth
