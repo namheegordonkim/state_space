@@ -5,6 +5,8 @@ from shutil import copyfile
 import gym
 import numpy as np
 import torch
+from tqdm import tqdm
+
 import wandb
 from gym import Env
 from stable_baselines3 import PPO
@@ -143,13 +145,20 @@ def main(args):
         envs = DummyVecEnv([factory.make_env for _ in range(n_envs)])
     else:
         envs = SubprocVecEnv([factory.make_env for _ in range(n_envs)])
-    #
+
     if args.stats_path is None:
-        envs = VecNormalize(envs)
+        envs = VecNormalize(envs, norm_obs=True, clip_obs=np.inf, norm_reward=False, clip_reward=np.inf)
     else:
         envs = VecNormalize.load(args.stats_path, envs)
     eval_callback = WAndBEvalCallback(render_env, args.eval_every, envs)
     callback.callbacks.append(eval_callback)
+
+    print("Do random explorations to build running averages")
+    envs.reset()
+    for _ in tqdm(range(1000)):
+        random_action = np.stack([envs.action_space.sample() for _ in range(n_envs)])
+        envs.step(random_action)
+    envs.training = False  # freeze the running averages (what a terrible variable name...)
 
     # We use PPO by default, but it should be easy to swap out for other algorithms.
     if args.pretrained_path is not None:
@@ -168,7 +177,10 @@ def main(args):
             squash_output=False
 
         )
-        learner = PPO(MlpPolicy, envs, n_steps=args.n_steps, verbose=1, policy_kwargs=policy_kwargs, device=args.device)
+
+        learner = PPO(MlpPolicy, envs, n_steps=args.n_steps, verbose=1, policy_kwargs=policy_kwargs, device=args.device, target_kl=2e-2)
+        if args.device == 'cpu':
+            torch.cuda.empty_cache()
         learner.learn(total_timesteps=args.total_timesteps, callback=callback)
 
     render_env.close()
