@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 import wandb
 from gym import Env
-from stable_baselines3 import PPO
+from stable_baselines3 import SAC,A2C,PPO
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize, VecEnv, DummyVecEnv
 from stable_baselines3.ppo import MlpPolicy
@@ -129,9 +129,21 @@ class WAndBEvalCallback(BaseCallback):
 
         wandb.log(metrics)
 
+class CellDivisionCallback(BaseCallback):
+
+    def __init__(self, envs, policy_dims, verbose=1):
+        self.envs = envs
+        self.policy_dims = policy_dims
+        super().__init__(verbose)
+
+    def _on_step(self) -> bool:
+        pass
+
+    def _on_rollout_start(self) -> None:
+        pass
 
 def main(args):
-    wandb.init(project=args.project_name, name=args.run_name)
+    # wandb.init(project=args.project_name, name=args.run_name)
     n_envs = len(os.sched_getaffinity(0))
     factory = EnvFactory(args.env)
 
@@ -150,9 +162,14 @@ def main(args):
         envs = VecNormalize(envs, norm_obs=True, clip_obs=np.inf, norm_reward=False, clip_reward=np.inf)
     else:
         envs = VecNormalize.load(args.stats_path, envs)
-    eval_callback = WAndBEvalCallback(render_env, args.eval_every, envs)
-    callback.callbacks.append(eval_callback)
 
+
+    # eval_callback = WAndBEvalCallback(render_env, args.eval_every, envs)
+    # callback.callbacks.append(eval_callback)
+
+    celldivision_callback = CellDivisionCallback(envs=envs,policy_dims=args.policy_dims)
+    callback.callbacks.append(celldivision_callback)
+    
     print("Do random explorations to build running averages")
     envs.reset()
     for _ in tqdm(range(1000)):
@@ -162,6 +179,7 @@ def main(args):
 
     # We use PPO by default, but it should be easy to swap out for other algorithms.
     if args.pretrained_path is not None:
+
         pretrained_path = args.pretrained_path
         learner = PPO.load(pretrained_path, envs, device=args.device)
         learner.learn(total_timesteps=args.total_timesteps, callback=callback)
@@ -178,7 +196,15 @@ def main(args):
 
         )
 
-        learner = PPO(MlpPolicy, envs, n_steps=args.n_steps, verbose=1, policy_kwargs=policy_kwargs, device=args.device, target_kl=2e-2)
+        
+
+        if args.model_name.lower() == 'ppo':
+            learner = PPO(MlpPolicy, envs, n_steps=args.n_steps, verbose=1, policy_kwargs=policy_kwargs, device=args.device, target_kl=2e-2)
+        elif args.model_name.lower() == 'a2c':
+            learner = A2C(MlpPolicy, envs, n_steps=args.n_steps, verbose=1, policy_kwargs=policy_kwargs, device=args.device)
+        elif args.model_name.lower() == 'sac':
+            learner = SAC(MlpPolicy, envs, n_steps=args.n_steps, verbose=1, policy_kwargs=policy_kwargs, device=args.device)
+
         if args.device == 'cpu':
             torch.cuda.empty_cache()
         learner.learn(total_timesteps=args.total_timesteps, callback=callback)
@@ -193,9 +219,9 @@ if __name__ == "__main__":
     parser.add_argument("--run_name", help="Weights & Biases run name", required=True, type=str)
     parser.add_argument("--env", help="Name of the environment as registered in __init__.py somewhere", required=True,
                         type=str)
-    parser.add_argument("--n_steps", help="Number of timesteps in each rollouts when training with PPO", required=True,
+    parser.add_argument("--n_steps", help="Number of timesteps in each rollouts when training with model", required=True,
                         type=int)
-    parser.add_argument("--total_timesteps", help="Total timesteps to train with PPO", required=True,
+    parser.add_argument("--total_timesteps", help="Total timesteps to train with model", required=True,
                         type=int)
     parser.add_argument("--policy_dims", help="Hidden layers for policy network", nargs='+', type=int, required=True)
     parser.add_argument("--value_dims", help="Hidden layers for value predictor network", nargs='+', type=int, required=True)
@@ -207,5 +233,6 @@ if __name__ == "__main__":
     parser.add_argument("--debug", help="Set true to disable parallel processing and run debugging programs",
                         action="store_true")
     parser.add_argument("--device", help="Device option for stable baselines algorithms", default="auto")
+    parser.add_argument("--model_name", help="Model name", default="ppo")
     args = parser.parse_args()
     main(args)
