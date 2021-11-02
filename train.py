@@ -201,6 +201,7 @@ class CellDivisionCallback(BaseCallback):
         self.i += 1
 
 def main(args):
+
     # wandb.init(project=args.project_name, name=args.run_name)
     n_envs = len(os.sched_getaffinity(0))
     factory = EnvFactory(args.env)
@@ -242,28 +243,31 @@ def main(args):
         learner = PPO.load(pretrained_path, envs, device=args.device)
         learner.learn(total_timesteps=args.total_timesteps, callback=callback)
     else:
-        policy_kwargs = dict(
-            activation_fn=nn.ReLU,
-            net_arch=[dict(
-                vf=args.value_dims,
-                pi=args.policy_dims
+
+        # Loop through different policy dims, train model for each
+        for policy_dims in [args.policy_dims]:
+            policy_kwargs = dict(
+                activation_fn=nn.ReLU,
+                net_arch=[dict(
+                    vf=args.value_dims,
+                    pi=policy_dims # args.policy_dims
+                )
+                ],
+                log_std_init=args.log_std_init,
+                squash_output=False
             )
-            ],
-            log_std_init=args.log_std_init,
-            squash_output=False
 
-        )
+            # Could loop though different algorithms as well
+            if args.model_name.lower() == 'ppo':
+                learner = PPO(MlpPolicy, envs, n_steps=args.n_steps, verbose=1, policy_kwargs=policy_kwargs, device=args.device, target_kl=2e-2)
+            elif args.model_name.lower() == 'a2c':
+                learner = A2C(MlpPolicy, envs, n_steps=args.n_steps, verbose=1, policy_kwargs=policy_kwargs, device=args.device)
+            elif args.model_name.lower() == 'sac':
+                learner = SAC(MlpPolicy, envs, n_steps=args.n_steps, verbose=1, policy_kwargs=policy_kwargs, device=args.device)
 
-        if args.model_name.lower() == 'ppo':
-            learner = PPO(MlpPolicy, envs, n_steps=args.n_steps, verbose=1, policy_kwargs=policy_kwargs, device=args.device, target_kl=2e-2)
-        elif args.model_name.lower() == 'a2c':
-            learner = A2C(MlpPolicy, envs, n_steps=args.n_steps, verbose=1, policy_kwargs=policy_kwargs, device=args.device)
-        elif args.model_name.lower() == 'sac':
-            learner = SAC(MlpPolicy, envs, n_steps=args.n_steps, verbose=1, policy_kwargs=policy_kwargs, device=args.device)
-
-        if args.device == 'cpu':
-            torch.cuda.empty_cache()
-        learner.learn(total_timesteps=args.total_timesteps, callback=callback)
+            if args.device == 'cpu':
+                torch.cuda.empty_cache()
+            learner.learn(total_timesteps=args.total_timesteps, callback=callback)
 
     render_env.close()
     envs.close()
