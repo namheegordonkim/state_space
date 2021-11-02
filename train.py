@@ -4,14 +4,18 @@ from shutil import copyfile
 
 import gym
 import numpy as np
+import matplotlib.pyplot as plt
 import torch
 from tqdm import tqdm
 
 import wandb
 from gym import Env
+from colorhash import ColorHash
+from scipy.interpolate import griddata
 from stable_baselines3 import SAC,A2C,PPO
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize, VecEnv, DummyVecEnv
+from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.ppo import MlpPolicy
 from torch import nn
 
@@ -131,16 +135,70 @@ class WAndBEvalCallback(BaseCallback):
 
 class CellDivisionCallback(BaseCallback):
 
-    def __init__(self, envs, policy_dims, verbose=1):
+    def __init__(self, envs, policy_dims, model_name, env_name, verbose=1):
         self.envs = envs
         self.policy_dims = policy_dims
+        self.policy_dims_str = '_'.join([str(x) for x in self.policy_dims])
+        self.model_name = model_name
+        self.env_name = env_name
+        self.i = 0
         super().__init__(verbose)
 
     def _on_step(self) -> bool:
         pass
 
     def _on_rollout_start(self) -> None:
-        pass
+        states = []
+        for i in np.arange(-10, 110):
+            for j in np.arange(-3, 3, 0.05):
+                states.append([i, j])
+        states = np.stack(states)
+        states_scaled = self.envs.normalize_obs(states)
+        states_tensor = torch.as_tensor(states_scaled).float()
+
+        policy: ActorCriticPolicy = self.model.policy.cpu()
+        true_actions_tensor, _, _ = policy.forward(states_tensor, deterministic=True)
+        features_tensor = policy.features_extractor.forward(states_tensor)
+        shared_latents_tensor = policy.mlp_extractor.shared_net.forward(features_tensor)
+        policy_latents_tensor_layer1 = policy.mlp_extractor.policy_net[0].forward(shared_latents_tensor)
+        policy_latents_tensor_layer1_activated = policy.mlp_extractor.policy_net[1].forward(policy_latents_tensor_layer1)
+        policy_latents_tensor_layer2 = policy.mlp_extractor.policy_net[2].forward(policy_latents_tensor_layer1_activated)
+        policy_latents_tensor_layer2_activated = policy.mlp_extractor.policy_net[3].forward(policy_latents_tensor_layer2)
+        actions_tensor = policy.action_net.forward(policy_latents_tensor_layer2_activated)
+
+        assert actions_tensor.equal(true_actions_tensor)
+
+        binary_embeddings_layer1 = policy_latents_tensor_layer1_activated > 0
+        binary_embeddings_layer1 = binary_embeddings_layer1.cpu().detach().numpy()
+        binary_embeddings_layer2 = policy_latents_tensor_layer2_activated > 0
+        binary_embeddings_layer2 = binary_embeddings_layer2.cpu().detach().numpy()
+
+        binary_embeddings = np.concatenate([binary_embeddings_layer1, binary_embeddings_layer2], axis=1).astype(int)
+        integer_embeddings = np.packbits(binary_embeddings, axis=1, bitorder="little")
+        integer_embeddings = integer_embeddings @ (256 ** np.arange(integer_embeddings.shape[1]))  # to allow arbitrary number of bits
+
+        # convert raw integer embeddings to 0, 1, 2, 3...
+        # fast rendering of state cells via grid interpolation
+        grid_x, grid_y = np.mgrid[-10:110:1000j, -3:3:1000j]
+        z = griddata((states[:, 0], states[:, 1]), integer_embeddings, (grid_x, grid_y), method='nearest')
+
+        # convert raw integer
+        convert_raw_integer_to_colorhash = np.vectorize(lambda x: ColorHash(x).rgb)
+        grid_z = np.array(convert_raw_integer_to_colorhash(z)).swapaxes(0, 1).swapaxes(1, 2)
+
+        plt.figure()
+        plt.imshow(grid_z, extent=[-10, 110, -3, 3], aspect='auto')
+        plt.title("State Space Visualized")
+        plt.xlabel("$x$")
+        plt.ylabel("$\\dot x$")
+
+        # Create a directory for the current policy dimensions if it does not exist yet
+        path_for_figures = f'policies/{self.env_name}/{self.model_name}/{self.policy_dims_str}'
+        if not os.path.exists(path_for_figures):
+            os.mkdir(path_for_figures)
+
+        plt.savefig(f'{path_for_figures}/fig{self.i}')
+        self.i += 1
 
 def main(args):
     # wandb.init(project=args.project_name, name=args.run_name)
@@ -167,7 +225,7 @@ def main(args):
     # eval_callback = WAndBEvalCallback(render_env, args.eval_every, envs)
     # callback.callbacks.append(eval_callback)
 
-    celldivision_callback = CellDivisionCallback(envs=envs,policy_dims=args.policy_dims)
+    celldivision_callback = CellDivisionCallback(envs=envs,policy_dims=args.policy_dims,model_name=args.model_name,env_name=args.env)
     callback.callbacks.append(celldivision_callback)
     
     print("Do random explorations to build running averages")
@@ -195,8 +253,6 @@ def main(args):
             squash_output=False
 
         )
-
-        
 
         if args.model_name.lower() == 'ppo':
             learner = PPO(MlpPolicy, envs, n_steps=args.n_steps, verbose=1, policy_kwargs=policy_kwargs, device=args.device, target_kl=2e-2)
