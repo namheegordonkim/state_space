@@ -25,8 +25,14 @@ class EnvFactory:
 
 
 def main(args):
-    policy_path = args.policy_path
+    
+    policy_path = 'policies/envs:Car1DEnv-v1/ppo/16_16/latest_16_16.zip' # args.policy_path
     expert = PPO.load(policy_path)
+
+    print(dir(expert))
+    print(type(expert))
+
+
 
     # Initialize environment for input standardization
     factory = EnvFactory(args.env)
@@ -43,6 +49,7 @@ def main(args):
     states_tensor = torch.as_tensor(states_scaled).float()
 
     policy: ActorCriticPolicy = expert.policy.cpu()
+
     true_actions_tensor, _, _ = policy.forward(states_tensor, deterministic=True)
     features_tensor = policy.features_extractor.forward(states_tensor)
     shared_latents_tensor = policy.mlp_extractor.shared_net.forward(features_tensor)

@@ -148,6 +148,12 @@ class CellDivisionCallback(BaseCallback):
         pass
 
     def _on_rollout_start(self) -> None:
+        path_for_figures = f'policies/{self.env_name}/{self.model_name}/{self.policy_dims_str}'
+        if not os.path.exists(path_for_figures):
+            os.mkdir(path_for_figures)
+        self.model.save(f'{path_for_figures}/latest_{self.policy_dims_str}.zip')
+        self.envs.save(f'{path_for_figures}/latest_stats_{self.policy_dims_str}.pth')
+        
         states = []
         for i in np.arange(-10, 110):
             for j in np.arange(-3, 3, 0.05):
@@ -193,9 +199,6 @@ class CellDivisionCallback(BaseCallback):
         plt.ylabel("$\\dot x$")
 
         # Create a directory for the current policy dimensions if it does not exist yet
-        path_for_figures = f'policies/{self.env_name}/{self.model_name}/{self.policy_dims_str}'
-        if not os.path.exists(path_for_figures):
-            os.mkdir(path_for_figures)
 
         plt.savefig(f'{path_for_figures}/fig{self.i}')
         self.i += 1
@@ -265,9 +268,12 @@ def main(args):
             elif args.model_name.lower() == 'sac':
                 learner = SAC(MlpPolicy, envs, n_steps=args.n_steps, verbose=1, policy_kwargs=policy_kwargs, device=args.device)
 
-            if args.device == 'cpu':
-                torch.cuda.empty_cache()
-            learner.learn(total_timesteps=args.total_timesteps, callback=callback)
+
+            print(type(learner))
+
+            # if args.device == 'cpu':
+            #     torch.cuda.empty_cache()
+            # learner.learn(total_timesteps=args.total_timesteps, callback=callback)
 
     render_env.close()
     envs.close()
