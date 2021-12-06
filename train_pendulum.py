@@ -17,8 +17,6 @@ from stable_baselines3.ppo import MlpPolicy
 from torch import nn
 import math
 
-import matplotlib.pyplot as plt
-
 np.set_printoptions(formatter={'float': "{:0.3f}".format})
 device = "cpu"
 if torch.cuda.is_available():
@@ -53,109 +51,6 @@ def get_cumulative_rewards_from_vecenv_results(reward_rows, done_rows):
                 break
         cumulative_rewards.append(cumulative_reward)
     return np.array(cumulative_rewards)
-
-
-class UCRCallback(BaseCallback):
-    """
-    a callback for calculating encoding and Used Cell Ratio
-
-    :param verbose: (int) Verbosity level 0: not output 1: info 2: debug
-    """
-    def __init__(self, envs: VecNormalize,  eval_every: int, env_name: str, verbose=0):
-        #super(UCRCallback, self).__init__(verbose)
-        self._called = 0
-        self.envs = envs
-        self.eval_every = eval_every
-        self.env_name = env_name
-        super().__init__(verbose)
-
-    def _on_step(self):
-        pass
-
-    def _on_rollout_start(self) -> None:
-        if self.n_calls % self.eval_every == 0:
-            print("starting")
-            expert = self.model
-
-
-            factory = EnvFactory(self.env_name)
-
-            #policy_path = "checkpoints/car1d_scratch/best.zip"
-            stats_path = "checkpoints/car1d_scratch/best_stats.pth"
-
-            env = DummyVecEnv([factory.make_env]) # for rendering
-            #env = VecNormalize(stats_path, env)
-            #env = DummyVecEnv([factory.make_env])
-            env = VecNormalize.load(stats_path, env)
-
-            env.training = False
-
-            states = []
-            for i in np.arange(-10, 110):
-                for j in np.arange(-100, 100):
-                    states.append([i, j])
-            states = np.stack(states)
-            #print(states.shape)
-            states_scaled = env.normalize_obs(states)
-            states_tensor = torch.as_tensor(states_scaled).float()
-
-            policy: ActorCriticPolicy = expert.policy.cpu()
-            true_actions_tensor, _, _ = policy.forward(states_tensor, deterministic=True)
-            features_tensor = policy.features_extractor.forward(states_tensor)
-            shared_latents_tensor = policy.mlp_extractor.shared_net.forward(features_tensor)
-            policy_latents_tensor_layer1 = policy.mlp_extractor.policy_net[0].forward(shared_latents_tensor)
-            policy_latents_tensor_layer1_activated = policy.mlp_extractor.policy_net[1].forward(policy_latents_tensor_layer1)
-            policy_latents_tensor_layer2 = policy.mlp_extractor.policy_net[2].forward(policy_latents_tensor_layer1_activated)
-            policy_latents_tensor_layer2_activated = policy.mlp_extractor.policy_net[3].forward(policy_latents_tensor_layer2)
-            actions_tensor = policy.action_net.forward(policy_latents_tensor_layer2_activated)
-
-            assert actions_tensor.equal(true_actions_tensor)
-
-            binary_embeddings_layer1 = policy_latents_tensor_layer1_activated > 0
-            binary_embeddings_layer1 = binary_embeddings_layer1.cpu().detach().numpy()
-            binary_embeddings_layer2 = policy_latents_tensor_layer2_activated > 0
-            binary_embeddings_layer2 = binary_embeddings_layer2.cpu().detach().numpy()
-
-            binary_embeddings = np.concatenate([binary_embeddings_layer1, binary_embeddings_layer2], axis=1).astype(int)
-            integer_embeddings = np.packbits(binary_embeddings, axis=1, bitorder="little")
-            integer_embeddings = integer_embeddings @ (256 ** np.arange(integer_embeddings.shape[1]))  # to allow arbitrary number of bits
-            #print(len(integer_embeddings))
-            #grid_x, grid_y = np.mgrid[-10:110:1000j, -100:100:1000j]
-            #z = griddata((states[:, 0], states[:, 1]), integer_embeddings, (grid_x, grid_y), method='nearest')
-            #print(z)
-
-            obs = env.reset()
-            done = False
-            visited_states = []
-            while not done:
-                action, state = expert.predict(obs, deterministic=True)
-                obs, reward, done, info = env.step(action)
-                #print(obs)
-                x_obs = round(obs[0][0])
-                y_obs = round(obs[0][1])
-                x_obs = np.clip(x_obs, -10, 110)
-                y_obs = np.clip(y_obs, -100, 100)
-                for i in range(len(states)):
-                    #print(states[i])
-                    if(states[i][0] == x_obs and states[i][1] == y_obs):
-                        #print(x_obs)
-                        #print(states[i][0])
-                        #print(y_obs)
-                        #print(states[i][1])
-                        #print(integer_embeddings[i])
-                        visited_states.append(integer_embeddings[i])
-                        break    # break here
-                    elif(i == range(len(states) - 1)):
-                        print("FAILED TO FIND CELL FOR STATE" + str(obs))
-            visited_states = np.array(visited_states)
-            count = len(np.unique(visited_states))
-            countall = len(np.unique(integer_embeddings))
-            print("UCR: " + str(count) + "/" + str(countall))
-
-            with open("ucrresults.csv", "a") as ucrfile:
-                ucrfile.write(str(self.n_calls) + "," + str(countall) + "," + str(count) + "\n")
-
-
 
 
 class WAndBEvalCallback(BaseCallback):
@@ -261,14 +156,6 @@ def main(args):
     callback.callbacks.append(eval_callback)
 
 
-    # Calculate UCR callback
-    ucr_callback = UCRCallback(envs, args.eval_every, args.env)
-    #ucr_callbackNTimesteps = EveryNTimesteps(n_steps=10, callback=ucr_callback)
-    callback.callbacks.append(ucr_callback)
-    #make csv out of results
-    with open("ucrresults.csv", "w") as ucrfile:
-        ucrfile.write("n calls" + "," + "cells total" + "," + "used cells" + "\n")
-
     print("Do random explorations to build running averages")
     envs.reset()
     for _ in tqdm(range(1000)):
@@ -301,16 +188,6 @@ def main(args):
 
     render_env.close()
     envs.close()
-
-    #plot ucr results
-    ucrresults = np.genfromtxt("ucrresults.csv", delimiter=',')
-    #print(ucrresults)
-    ucrresults = np.delete(ucrresults, (0), axis=0) #drop first row
-    #print(ucrresults[:,0])
-    plt.plot(ucrresults[:,0], ucrresults[:,1], label = "total cells")
-    plt.plot(ucrresults[:,0], ucrresults[:,2], label = "used cells")
-    plt.legend()
-    plt.show()
 
 
 if __name__ == "__main__":

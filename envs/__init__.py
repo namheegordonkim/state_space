@@ -25,3 +25,9 @@ register(
     entry_point="envs.toy_envs:Car1DEnv1",
     max_episode_steps=200,
 )
+
+register(
+    id="PendulumEnv0-v0",
+    entry_point="envs.toy_envs:PendulumEnv0",
+    max_episode_steps=200,
+)
