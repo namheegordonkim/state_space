@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # Assume that the arguments are set as variables via e.g. "export PROMPT=..."
+set -e
 
 OPTIONALS=""
 if [[ -n ${PRETRAINED_PATH} ]]; then OPTIONALS="$OPTIONALS --pretrained_path $PRETRAINED_PATH"; fi

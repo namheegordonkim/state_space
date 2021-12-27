@@ -193,15 +193,14 @@ class EvalCallback(BaseCallback):
                 pickle.dump(self.cumulative_reward_history, f)
 
 
-class CellDivisionCallback(BaseCallback):
+class EvalAndVisualCallback(BaseCallback):
 
-    def __init__(self, envs, policy_dims, model_name, env_name, verbose=1):
+    def __init__(self, envs, do_every, verbose=1):
         self.envs = envs
-        self.policy_dims = policy_dims
-        self.policy_dims_str = '_'.join([str(x) for x in self.policy_dims])
-        self.model_name = model_name
-        self.env_name = env_name
+        self.do_every = do_every
         self.i = 0
+        self.cumulative_reward_history = []
+
         super().__init__(verbose)
 
     def _on_step(self) -> bool:
@@ -209,56 +208,97 @@ class CellDivisionCallback(BaseCallback):
 
     def _on_rollout_start(self) -> None:
         path_for_figures = f"{args.results_dir}/{args.seed}_{self.i:03d}.png"
-        self.model.save(f'{args.checkpoints_dir}/{args.seed}_latest_{self.policy_dims_str}.zip')
-        self.envs.save(f'{args.checkpoints_dir}/{args.seed}_latest_stats_{self.policy_dims_str}.pth')
+        self.model.save(f'{args.checkpoints_dir}/{args.seed}_latest.zip')
+        self.envs.save(f'{args.checkpoints_dir}/{args.seed}_latest_stats.pth')
 
-        states = []
-        for i in np.arange(-10, 110):
-            for j in np.arange(-3, 3, 0.05):
-                states.append([i, j])
-        states = np.stack(states)
-        states_scaled = self.envs.normalize_obs(states)
-        states_tensor = torch.as_tensor(states_scaled).float()
+        if self.i % self.do_every == 0:
+            obs_column = self.envs.reset()
+            obs_history = [obs_column[0]]
+            reward_columns = []
+            done_columns = []
+            actions = []
+            # We can optionally gather images and render as video
+            # images = []
+            self.envs.training = False
+            for i in range(args.n_steps):
+                action_column, states = self.model.predict(obs_column, deterministic=True)
+                next_obs_column, old_reward_column, done_column, info = self.envs.step(action_column)
+                for a in action_column:
+                    actions.append(a)
+                reward_column = self.envs.get_original_reward()
+                reward_columns.append(reward_column)
+                done_columns.append(done_column)
+                if not done_column[0]:
+                    obs_history.append(next_obs_column[0])
+                obs_column = next_obs_column
 
-        policy: ActorCriticPolicy = self.model.policy.cpu()
-        true_actions_tensor, _, _ = policy.forward(states_tensor, deterministic=True)
-        features_tensor = policy.features_extractor.forward(states_tensor)
-        shared_latents_tensor = policy.mlp_extractor.shared_net.forward(features_tensor)
-        policy_latents_tensor_layer1 = policy.mlp_extractor.policy_net[0].forward(shared_latents_tensor)
-        policy_latents_tensor_layer1_activated = policy.mlp_extractor.policy_net[1].forward(policy_latents_tensor_layer1)
-        policy_latents_tensor_layer2 = policy.mlp_extractor.policy_net[2].forward(policy_latents_tensor_layer1_activated)
-        policy_latents_tensor_layer2_activated = policy.mlp_extractor.policy_net[3].forward(policy_latents_tensor_layer2)
-        actions_tensor = policy.action_net.forward(policy_latents_tensor_layer2_activated)
+            reward_rows = np.stack(reward_columns).transpose()
+            done_rows = np.stack(done_columns).transpose()
+            cumulative_rewards = get_cumulative_rewards_from_vecenv_results(reward_rows, done_rows)
+            cumulative_rewards_mean = np.mean(cumulative_rewards)
 
-        assert actions_tensor.equal(true_actions_tensor)
+            self.cumulative_reward_history.append(cumulative_rewards_mean)
+            print(f"cumulative reward mean: {cumulative_rewards_mean}")
+            with open(f"{args.results_dir}/{args.seed}_history.pth", "wb") as f:
+                pickle.dump(self.cumulative_reward_history, f)
 
-        binary_embeddings_layer1 = policy_latents_tensor_layer1_activated > 0
-        binary_embeddings_layer1 = binary_embeddings_layer1.cpu().detach().numpy()
-        binary_embeddings_layer2 = policy_latents_tensor_layer2_activated > 0
-        binary_embeddings_layer2 = binary_embeddings_layer2.cpu().detach().numpy()
+            states = []
+            for i in np.arange(-10, 110):
+                for j in np.arange(-3, 3, 0.05):
+                    states.append([i, j])
+            states = np.stack(states)
+            states_scaled = self.envs.normalize_obs(states)
+            states_tensor = torch.as_tensor(states_scaled).float()
 
-        binary_embeddings = np.concatenate([binary_embeddings_layer1, binary_embeddings_layer2], axis=1).astype(int)
-        integer_embeddings = np.packbits(binary_embeddings, axis=1, bitorder="little")
-        integer_embeddings = integer_embeddings @ (256 ** np.arange(integer_embeddings.shape[1]))  # to allow arbitrary number of bits
+            policy: ActorCriticPolicy = self.model.policy.cpu()
+            true_actions_tensor, _, _ = policy.forward(states_tensor, deterministic=True)
+            features_tensor = policy.features_extractor.forward(states_tensor)
+            shared_latents_tensor = policy.mlp_extractor.shared_net.forward(features_tensor)
+            policy_latents_tensor_layer1 = policy.mlp_extractor.policy_net[0].forward(shared_latents_tensor)
+            policy_latents_tensor_layer1_activated = policy.mlp_extractor.policy_net[1].forward(policy_latents_tensor_layer1)
+            policy_latents_tensor_layer2 = policy.mlp_extractor.policy_net[2].forward(policy_latents_tensor_layer1_activated)
+            policy_latents_tensor_layer2_activated = policy.mlp_extractor.policy_net[3].forward(policy_latents_tensor_layer2)
+            actions_tensor = policy.action_net.forward(policy_latents_tensor_layer2_activated)
 
-        # convert raw integer embeddings to 0, 1, 2, 3...
-        # fast rendering of state cells via grid interpolation
-        grid_x, grid_y = np.mgrid[-10:110:1000j, -3:3:1000j]
-        z = griddata((states[:, 0], states[:, 1]), integer_embeddings, (grid_x, grid_y), method='nearest')
+            assert actions_tensor.equal(true_actions_tensor)
 
-        # convert raw integer
-        convert_raw_integer_to_colorhash = np.vectorize(lambda x: ColorHash(x).rgb)
-        grid_z = np.array(convert_raw_integer_to_colorhash(z)).swapaxes(0, 1).swapaxes(1, 2)
+            binary_embeddings_layer1 = policy_latents_tensor_layer1_activated > 0
+            binary_embeddings_layer1 = binary_embeddings_layer1.cpu().detach().numpy()
+            binary_embeddings_layer2 = policy_latents_tensor_layer2_activated > 0
+            binary_embeddings_layer2 = binary_embeddings_layer2.cpu().detach().numpy()
 
-        plt.figure()
-        plt.imshow(grid_z, extent=[-10, 110, -3, 3], aspect='auto')
-        plt.title(f"State Space Division\n(Seed {args.seed}, Iteration {self.i:03d})")
-        plt.xlabel("$x$")
-        plt.ylabel("$\\dot x$")
+            binary_embeddings = np.concatenate([binary_embeddings_layer1, binary_embeddings_layer2], axis=1).astype(int)
+            integer_embeddings = np.packbits(binary_embeddings, axis=1, bitorder="little")
+            integer_embeddings = integer_embeddings @ (256 ** np.arange(integer_embeddings.shape[1]))  # to allow arbitrary number of bits
 
-        # Create a directory for the current policy dimensions if it does not exist yet
+            # convert raw integer embeddings to 0, 1, 2, 3...
+            # fast rendering of state cells via grid interpolation
+            grid_x, grid_y = np.mgrid[-10:110:1000j, -3:3:1000j]
+            z = griddata((states[:, 0], states[:, 1]), integer_embeddings, (grid_x, grid_y), method='nearest')
 
-        plt.savefig(path_for_figures)
+            # convert raw integer
+            convert_raw_integer_to_colorhash = np.vectorize(lambda x: ColorHash(x).rgb)
+            grid_z = np.array(convert_raw_integer_to_colorhash(z)).swapaxes(0, 1).swapaxes(1, 2)
+
+            plt.figure()
+            plt.title(f"State Space Division\n(Seed {args.seed}, Iteration {self.i:03d}, Reward: {cumulative_rewards_mean:.1f})")
+            plt.xlabel("$x$")
+            plt.ylabel("$\\dot x$")
+
+            plt.imshow(grid_z, extent=[-10, 110, -3, 3], aspect='auto')
+            plt.xlim(-10, 110)
+            plt.ylim(-3, 3)
+            # arrow for trajectories
+            obs_history = np.stack(obs_history)
+            obs_history = self.envs.unnormalize_obs(obs_history)
+            arrow_x = obs_history[1:, 0] - obs_history[:-1, 0]
+            arrow_y = obs_history[1:, 1] - obs_history[:-1, 1]
+            plt.scatter([0], [0], marker="*")
+            plt.scatter([100], [0], marker="*")
+            plt.quiver(obs_history[:-1, 0], obs_history[:-1, 1], arrow_x, arrow_y, angles='xy', scale_units='xy', scale=1)
+
+            plt.savefig(path_for_figures)
+
         self.i += 1
 
 
@@ -287,11 +327,14 @@ def main(args):
         envs = VecNormalize.load(args.stats_path, envs)
 
     # eval_callback = WAndBEvalCallback(render_env, args.eval_every, envs)
-    eval_callback = EvalCallback(render_env, args.eval_every, envs)
-    callback.callbacks.append(eval_callback)
+    # eval_callback = EvalCallback(render_env, args.eval_every, envs)
+    # callback.callbacks.append(eval_callback)
 
-    celldivision_callback = CellDivisionCallback(envs=envs, policy_dims=args.policy_dims, model_name=args.model_name, env_name=args.env)
-    callback.callbacks.append(celldivision_callback)
+    my_callback = EvalAndVisualCallback(
+        envs=envs,
+        do_every=1,
+    )
+    callback.callbacks.append(my_callback)
 
     print("Do random explorations to build running averages")
     envs.reset()
