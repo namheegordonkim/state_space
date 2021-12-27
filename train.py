@@ -307,7 +307,8 @@ def main(args):
     np.random.seed(args.seed)
     torch.random.manual_seed(args.seed)
 
-    n_envs = len(os.sched_getaffinity(0))
+    # n_envs = len(os.sched_getaffinity(0))
+    n_envs = args.n_envs
     factory = EnvFactory(args.env)
 
     # Wrap the
@@ -385,6 +386,7 @@ if __name__ == "__main__":
     parser.add_argument("--run_name", help="Weights & Biases run name", required=True, type=str)
     parser.add_argument("--env", help="Name of the environment as registered in __init__.py somewhere", required=True,
                         type=str)
+    parser.add_argument("--n_envs", help="Number of environments to run in parallel", required=True, type=int)
     parser.add_argument("--n_steps", help="Number of timesteps in each rollouts when training with model", required=True,
                         type=int)
     parser.add_argument("--total_timesteps", help="Total timesteps to train with model", required=True,

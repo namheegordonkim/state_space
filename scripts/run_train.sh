@@ -23,6 +23,7 @@ python train.py \
 --results_dir "$RESULTS_DIR" \
 --checkpoints_dir "$CHECKPOINTS_DIR" \
 --log_std_init "$LOG_STD_INIT" \
+--n_envs "$N_ENVS" \
 ${OPTIONALS}
 
 wait

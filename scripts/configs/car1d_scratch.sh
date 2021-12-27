@@ -13,5 +13,6 @@ export DEVICE="cpu"
 export MODEL_NAME="ppo"
 export SEED=0
 export LOG_STD_INIT=-2.0
+export N_ENVS=100
 
 # results dir to be set in sbatch_setup script
