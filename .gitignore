@@ -131,3 +131,6 @@ dmypy.json
 testdata
 policy_cloning.py
 inprogress
+.idea
+/checkpoints/
+/wandb/

@@ -12,7 +12,7 @@ import wandb
 from gym import Env
 from colorhash import ColorHash
 from scipy.interpolate import griddata
-from stable_baselines3 import SAC,A2C,PPO
+from stable_baselines3 import SAC, A2C, PPO
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize, VecEnv, DummyVecEnv
 from stable_baselines3.common.policies import ActorCriticPolicy
@@ -133,6 +133,7 @@ class WAndBEvalCallback(BaseCallback):
 
         wandb.log(metrics)
 
+
 class CellDivisionCallback(BaseCallback):
 
     def __init__(self, envs, policy_dims, model_name, env_name, verbose=1):
@@ -153,7 +154,7 @@ class CellDivisionCallback(BaseCallback):
             os.mkdir(path_for_figures)
         self.model.save(f'{path_for_figures}/latest_{self.policy_dims_str}.zip')
         self.envs.save(f'{path_for_figures}/latest_stats_{self.policy_dims_str}.pth')
-        
+
         states = []
         for i in np.arange(-10, 110):
             for j in np.arange(-3, 3, 0.05):
@@ -203,8 +204,8 @@ class CellDivisionCallback(BaseCallback):
         plt.savefig(f'{path_for_figures}/fig{self.i}')
         self.i += 1
 
-def main(args):
 
+def main(args):
     # wandb.init(project=args.project_name, name=args.run_name)
     n_envs = len(os.sched_getaffinity(0))
     factory = EnvFactory(args.env)
@@ -225,13 +226,12 @@ def main(args):
     else:
         envs = VecNormalize.load(args.stats_path, envs)
 
-
     # eval_callback = WAndBEvalCallback(render_env, args.eval_every, envs)
     # callback.callbacks.append(eval_callback)
 
-    celldivision_callback = CellDivisionCallback(envs=envs,policy_dims=args.policy_dims,model_name=args.model_name,env_name=args.env)
+    celldivision_callback = CellDivisionCallback(envs=envs, policy_dims=args.policy_dims, model_name=args.model_name, env_name=args.env)
     callback.callbacks.append(celldivision_callback)
-    
+
     print("Do random explorations to build running averages")
     envs.reset()
     for _ in tqdm(range(1000)):
@@ -253,7 +253,7 @@ def main(args):
                 activation_fn=nn.ReLU,
                 net_arch=[dict(
                     vf=args.value_dims,
-                    pi=policy_dims # args.policy_dims
+                    pi=policy_dims  # args.policy_dims
                 )
                 ],
                 log_std_init=args.log_std_init,
@@ -267,7 +267,6 @@ def main(args):
                 learner = A2C(MlpPolicy, envs, n_steps=args.n_steps, verbose=1, policy_kwargs=policy_kwargs, device=args.device)
             elif args.model_name.lower() == 'sac':
                 learner = SAC(MlpPolicy, envs, n_steps=args.n_steps, verbose=1, policy_kwargs=policy_kwargs, device=args.device)
-
 
             print(type(learner))
 
