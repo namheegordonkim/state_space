@@ -1,4 +1,5 @@
 import os
+import pickle
 from argparse import ArgumentParser
 from shutil import copyfile
 
@@ -12,7 +13,7 @@ import wandb
 from gym import Env
 from colorhash import ColorHash
 from scipy.interpolate import griddata
-from stable_baselines3 import SAC, A2C, PPO
+from stable_baselines3 import SAC, A2C, PPO, sac
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize, VecEnv, DummyVecEnv
 from stable_baselines3.common.policies import ActorCriticPolicy
@@ -108,7 +109,6 @@ class WAndBEvalCallback(BaseCallback):
                 done_columns.append(done_column)
                 obs_column = next_obs_column
 
-            self.envs.training = True
             reward_rows = np.stack(reward_columns).transpose()
             done_rows = np.stack(done_columns).transpose()
             cumulative_rewards = get_cumulative_rewards_from_vecenv_results(reward_rows, done_rows)
@@ -134,6 +134,65 @@ class WAndBEvalCallback(BaseCallback):
         wandb.log(metrics)
 
 
+class EvalCallback(BaseCallback):
+
+    def __init__(self, render_env: Env, eval_every: int, envs: VecNormalize, verbose=0):
+        self.render_env = render_env  # if render with rgb_array is implemented, use this to collect images
+        self.eval_every = eval_every
+        self.best_cumulative_rewards_mean = -np.inf
+        self.envs = envs
+        self.i = 0
+        self.cumulative_reward_history = []
+        super().__init__(verbose)
+
+    def _on_step(self) -> bool:
+        pass
+
+    def _on_rollout_start(self) -> None:
+        """
+        A rollout is the collection of environment interaction
+        using the current policy.
+        This event is triggered before collecting new samples.
+        """
+        if self.i % self.eval_every == 0:
+            obs_column = self.envs.reset()
+            reward_columns = []
+            done_columns = []
+            actions = []
+            # We can optionally gather images and render as video
+            # images = []
+            self.envs.training = False
+            for i in range(1000):
+                action_column, states = self.model.predict(obs_column, deterministic=True)
+                next_obs_column, old_reward_column, done_column, info = self.envs.step(action_column)
+                for a in action_column:
+                    actions.append(a)
+                reward_column = self.envs.get_original_reward()
+                reward_columns.append(reward_column)
+                done_columns.append(done_column)
+                obs_column = next_obs_column
+
+            reward_rows = np.stack(reward_columns).transpose()
+            done_rows = np.stack(done_columns).transpose()
+            cumulative_rewards = get_cumulative_rewards_from_vecenv_results(reward_rows, done_rows)
+            cumulative_rewards_mean = np.mean(cumulative_rewards)
+            # Also can compute standard deviation of rewards across different inits
+            # cumulative_rewards_std = np.std(cumulative_rewards)
+            # Uploads images as video
+            # images = np.stack(images)
+            # metrics.update({"video": wandb.Video(images, fps=24, format="mp4")})
+
+            # Can also do other things like upload plots, etc.
+
+            if cumulative_rewards_mean > self.best_cumulative_rewards_mean:
+                self.best_cumulative_rewards_mean = cumulative_rewards_mean
+
+            self.cumulative_reward_history.append(cumulative_rewards_mean)
+            print(f"cumulative reward mean: {cumulative_rewards_mean}")
+            with open(f"{args.results_dir}/{args.seed}_history.pth", "wb") as f:
+                pickle.dump(self.cumulative_reward_history, f)
+
+
 class CellDivisionCallback(BaseCallback):
 
     def __init__(self, envs, policy_dims, model_name, env_name, verbose=1):
@@ -149,11 +208,9 @@ class CellDivisionCallback(BaseCallback):
         pass
 
     def _on_rollout_start(self) -> None:
-        path_for_figures = f'policies/{self.env_name}/{self.model_name}/{self.policy_dims_str}'
-        if not os.path.exists(path_for_figures):
-            os.mkdir(path_for_figures)
-        self.model.save(f'{path_for_figures}/latest_{self.policy_dims_str}.zip')
-        self.envs.save(f'{path_for_figures}/latest_stats_{self.policy_dims_str}.pth')
+        path_for_figures = f"{args.results_dir}/{args.seed}_{self.i:03d}.png"
+        self.model.save(f'{args.checkpoints_dir}/{args.seed}_latest_{self.policy_dims_str}.zip')
+        self.envs.save(f'{args.checkpoints_dir}/{args.seed}_latest_stats_{self.policy_dims_str}.pth')
 
         states = []
         for i in np.arange(-10, 110):
@@ -195,18 +252,21 @@ class CellDivisionCallback(BaseCallback):
 
         plt.figure()
         plt.imshow(grid_z, extent=[-10, 110, -3, 3], aspect='auto')
-        plt.title("State Space Visualized")
+        plt.title(f"State Space Division\n(Seed {args.seed}, Iteration {self.i:03d})")
         plt.xlabel("$x$")
         plt.ylabel("$\\dot x$")
 
         # Create a directory for the current policy dimensions if it does not exist yet
 
-        plt.savefig(f'{path_for_figures}/fig{self.i}')
+        plt.savefig(path_for_figures)
         self.i += 1
 
 
 def main(args):
     # wandb.init(project=args.project_name, name=args.run_name)
+    np.random.seed(args.seed)
+    torch.random.manual_seed(args.seed)
+
     n_envs = len(os.sched_getaffinity(0))
     factory = EnvFactory(args.env)
 
@@ -216,7 +276,7 @@ def main(args):
     callback = CallbackList([])
 
     # Wrap the environment around parallel processing friendly wrapper, unless debug is on
-    if args.debug:
+    if bool(args.debug):
         envs = DummyVecEnv([factory.make_env for _ in range(n_envs)])
     else:
         envs = SubprocVecEnv([factory.make_env for _ in range(n_envs)])
@@ -227,7 +287,8 @@ def main(args):
         envs = VecNormalize.load(args.stats_path, envs)
 
     # eval_callback = WAndBEvalCallback(render_env, args.eval_every, envs)
-    # callback.callbacks.append(eval_callback)
+    eval_callback = EvalCallback(render_env, args.eval_every, envs)
+    callback.callbacks.append(eval_callback)
 
     celldivision_callback = CellDivisionCallback(envs=envs, policy_dims=args.policy_dims, model_name=args.model_name, env_name=args.env)
     callback.callbacks.append(celldivision_callback)
@@ -248,31 +309,28 @@ def main(args):
     else:
 
         # Loop through different policy dims, train model for each
-        for policy_dims in [args.policy_dims]:
-            policy_kwargs = dict(
-                activation_fn=nn.ReLU,
-                net_arch=[dict(
-                    vf=args.value_dims,
-                    pi=policy_dims  # args.policy_dims
-                )
-                ],
-                log_std_init=args.log_std_init,
-                squash_output=False
-            )
+        policy_kwargs = dict(
+            activation_fn=nn.ReLU,
+            net_arch=[dict(
+                vf=args.value_dims,
+                pi=args.policy_dims  # args.policy_dims
+            )],
+            log_std_init=args.log_std_init,
+            squash_output=False
+        )
 
-            # Could loop though different algorithms as well
-            if args.model_name.lower() == 'ppo':
-                learner = PPO(MlpPolicy, envs, n_steps=args.n_steps, verbose=1, policy_kwargs=policy_kwargs, device=args.device, target_kl=2e-2)
-            elif args.model_name.lower() == 'a2c':
-                learner = A2C(MlpPolicy, envs, n_steps=args.n_steps, verbose=1, policy_kwargs=policy_kwargs, device=args.device)
-            elif args.model_name.lower() == 'sac':
-                learner = SAC(MlpPolicy, envs, n_steps=args.n_steps, verbose=1, policy_kwargs=policy_kwargs, device=args.device)
+        # Could loop though different algorithms as well
+        if args.model_name.lower() == 'ppo':
+            learner = PPO(MlpPolicy, envs, n_steps=args.n_steps, verbose=1, policy_kwargs=policy_kwargs, device=args.device, target_kl=2e-2)
+        elif args.model_name.lower() == 'a2c':
+            learner = A2C(MlpPolicy, envs, n_steps=args.n_steps, verbose=1, policy_kwargs=policy_kwargs, device=args.device)
+        else:
+            learner = SAC(sac.MlpPolicy, envs, verbose=1, policy_kwargs=policy_kwargs, device=args.device)
 
-            print(type(learner))
-
-            # if args.device == 'cpu':
-            #     torch.cuda.empty_cache()
-            # learner.learn(total_timesteps=args.total_timesteps, callback=callback)
+        learner.learn(
+            total_timesteps=args.total_timesteps,
+            callback=callback,
+        )
 
     render_env.close()
     envs.close()
@@ -295,9 +353,12 @@ if __name__ == "__main__":
     parser.add_argument("--pretrained_path", help="Path to the pretrained policy zip file, if any", type=str)
     parser.add_argument("--stats_path", help="Path to the pretrained policy normalizer stats file, if any", type=str)
     parser.add_argument("--log_std_init", help="Initial Gaussian policy exploration level", type=float, default=-2.0)
-    parser.add_argument("--debug", help="Set true to disable parallel processing and run debugging programs",
-                        action="store_true")
+    parser.add_argument("--debug", help="Set true to disable parallel processing and run debugging programs", type=int)
     parser.add_argument("--device", help="Device option for stable baselines algorithms", default="auto")
     parser.add_argument("--model_name", help="Model name", default="ppo")
+    parser.add_argument("--results_dir", help="Directory to store results", type=str, required=True)
+    parser.add_argument("--checkpoints_dir", help="Directory to store results", type=str, required=True)
+    parser.add_argument("--seed", help="Random seed for replications", type=int, required=True)
     args = parser.parse_args()
+    print(args)
     main(args)
