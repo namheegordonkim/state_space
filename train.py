@@ -132,7 +132,7 @@ class WAndBEvalCallback(BaseCallback):
 
 def main(args):
     wandb.init(project=args.project_name, name=args.run_name)
-    n_envs = len(os.sched_getaffinity(0))
+    n_envs = 1 #len(os.sched_getaffinity(0))
     factory = EnvFactory(args.env)
 
     # Wrap the

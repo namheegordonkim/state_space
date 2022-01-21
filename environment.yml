@@ -1,0 +1,11 @@
+name : rl_env
+dependencies :
+  - pip
+  - pip :
+    - torch
+    - matplotlib
+    - pandas
+    - gym
+    - pygame
+    - stable-baselines3
+    - wandb
