@@ -17,6 +17,13 @@ from stable_baselines3.ppo import MlpPolicy
 from torch import nn
 import math
 
+from colorhash import ColorHash
+from stable_baselines3.common.policies import ActorCriticPolicy
+import matplotlib.pyplot as plt
+import seaborn as sns
+import matplotlib.patches as mpatches
+
+
 import matplotlib.pyplot as plt
 
 np.set_printoptions(formatter={'float': "{:0.3f}".format})
@@ -67,6 +74,8 @@ class UCRCallback(BaseCallback):
         self.envs = envs
         self.eval_every = eval_every
         self.env_name = env_name
+        self.means = {}
+        self.variances = {}
         super().__init__(verbose)
 
     def _on_step(self):
@@ -92,7 +101,7 @@ class UCRCallback(BaseCallback):
 
             states = []
             for i in np.arange(-10, 110):
-                for j in np.arange(-100, 100):
+                for j in np.arange(-3, 3, 0.05):
                     states.append([i, j])
             states = np.stack(states)
             #print(states.shape)
@@ -119,10 +128,26 @@ class UCRCallback(BaseCallback):
             binary_embeddings = np.concatenate([binary_embeddings_layer1, binary_embeddings_layer2], axis=1).astype(int)
             integer_embeddings = np.packbits(binary_embeddings, axis=1, bitorder="little")
             integer_embeddings = integer_embeddings @ (256 ** np.arange(integer_embeddings.shape[1]))  # to allow arbitrary number of bits
-            #print(len(integer_embeddings))
-            #grid_x, grid_y = np.mgrid[-10:110:1000j, -100:100:1000j]
-            #z = griddata((states[:, 0], states[:, 1]), integer_embeddings, (grid_x, grid_y), method='nearest')
-            #print(z)
+
+
+            grid_x, grid_y = np.mgrid[-10:110:1000j, -3:3:1000j]
+            z = griddata((states[:, 0], states[:, 1]), integer_embeddings, (grid_x, grid_y), method='nearest')
+
+            # convert raw integer
+            convert_raw_integer_to_colorhash = np.vectorize(lambda x: ColorHash(x).rgb)
+            grid_z = np.array(convert_raw_integer_to_colorhash(z)).swapaxes(0, 1).swapaxes(1, 2)
+
+            actions = actions_tensor.detach().numpy()
+            #print(actions)
+            #print(actions.shape)
+            ie = np.reshape(integer_embeddings, (-1, 1))
+            #print(integer_embeddings)
+            #print(ie)
+            #print(ie.shape)
+            combined = np.concatenate((ie, actions), axis =1)
+            #print(combined)
+            #print(states.shape)
+            #print(states)
 
             obs = env.reset()
             done = False
@@ -149,11 +174,74 @@ class UCRCallback(BaseCallback):
                         print("FAILED TO FIND CELL FOR STATE" + str(obs))
             visited_states = np.array(visited_states)
             count = len(np.unique(visited_states))
+            cells, cell_visits = np.unique(visited_states, return_counts=True)
             countall = len(np.unique(integer_embeddings))
             print("UCR: " + str(count) + "/" + str(countall))
+            #fig, ax = plt.subplots()
+            plt.figure()
+            plt.imshow(grid_z, extent=[-10, 110, -3, 3], aspect='auto')
+            plt.title("State Space Visualized")
+            plt.xlabel("$x$")
+            plt.ylabel("$\\dot x$")
+
+
+            patches = []
+            for i in np.unique(combined[:,0]):
+                #print('trying to find: ' + str(i))
+                ind =  np.where(cells == i)
+                #print(ind)
+                if(len(ind[0]) > 0):
+                    ind = ind[0][0]
+                    visits = cell_visits[ind]
+                else:
+                    visits = 0
+
+                indarr = np.where(combined[:,0] == i) #list of all found occurance indexes
+                cellcount = len(indarr[0])
+                #print(cellcount)
+                #print(indarr[0])
+                coords = states[indarr[0]] #here are the corresponding coordinates
+                #print(coords)
+                centroid = np.mean(coords, axis = 0) # calculate centroid as the mean of coordinates
+                #print(centroid)
+                #print(ColorHash(i).rgb)
+                #ax.annotate(str(i), (centroid[0], centroid[1]))
+                color = tuple([z / 255 for z in ColorHash(i).rgb])
+                #print(color)
+
+                txt = str(i) + ' (' + str(round(centroid[0], 2)) + ',' + str(round(centroid[1], 2)) + ')' + ', ' + str(cellcount)
+                patches.append( mpatches.Patch(label=txt, color = color))
+
+                tmp = combined[indarr[0]]
+                #print(tmp)
+                if i in self.means:
+                    arr = self.means[i].copy()
+                    arr.append((self.n_calls, centroid[0], centroid[1], cellcount, np.mean(tmp[:,1]), np.var(tmp[:,1]), visits)) #calculate mean  and variance of actions
+                    #print(np.mean(tmp[:,1]))
+                    self.means[i] = arr
+                else:
+                    self.means[i] = [(self.n_calls, centroid[0], centroid[1], cellcount, np.mean(tmp[:,1]), np.var(tmp[:,1]), visits)] #n_calls, cell_id, x, y, cell_count, mean, variance
+                    #print(np.mean(tmp[:,1]))
+
+            plt.legend(handles=patches, loc="lower center")
+            #plt.show()
+            figname = 'images/' + str(self.n_calls) + '.png'
+            plt.savefig(figname)
 
             with open("ucrresults.csv", "a") as ucrfile:
                 ucrfile.write(str(self.n_calls) + "," + str(countall) + "," + str(count) + "\n")
+
+            with open("statsresults.csv", "w") as statsfile:
+                statsfile.write("n_calls" + "," + "cell_id" + "," + "x" + "," + "y" + "," + "cell_count" + "," + "mean" + "," + "variance" + "," + "visits" + "\n")
+                for key in self.means:
+                    #print('test')
+                    #print(key)
+                    for res in self.means[key]:
+                        input = str(key)
+                        for item in res:
+                            input = input + "," + str(item)
+                        input = input + "\n"
+                        statsfile.write(input)
 
 
 
@@ -267,7 +355,10 @@ def main(args):
     callback.callbacks.append(ucr_callback)
     #make csv out of results
     with open("ucrresults.csv", "w") as ucrfile:
-        ucrfile.write("n calls" + "," + "cells total" + "," + "used cells" + "\n")
+        ucrfile.write("n calls" + "," + "cells total" + "," + "used cells" + "," + "mean" + "," + "variance" + "\n")
+
+    with open("statsresults.csv", "w") as statfile:
+        statfile.write("n_calls" + "," + "cell_id" + "," + "x" + "," + "y" + "," + "cell_count" + "," + "mean" + "," + "variance" + "\n")
 
     print("Do random explorations to build running averages")
     envs.reset()
@@ -307,8 +398,10 @@ def main(args):
     #print(ucrresults)
     ucrresults = np.delete(ucrresults, (0), axis=0) #drop first row
     #print(ucrresults[:,0])
-    plt.plot(ucrresults[:,0], ucrresults[:,1], label = "total cells")
-    plt.plot(ucrresults[:,0], ucrresults[:,2], label = "used cells")
+    #plt.plot(ucrresults[:,0], ucrresults[:,1], label = "total cells")
+    #plt.plot(ucrresults[:,0], ucrresults[:,2], label = "used cells")
+    plt.plot(ucrresults[:,0], ucrresults[:,3], label = "mean")
+    plt.plot(ucrresults[:,0], ucrresults[:,4], label = "variance")
     plt.legend()
     plt.show()
 
