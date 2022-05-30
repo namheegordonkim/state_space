@@ -10,7 +10,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 import matplotlib.pyplot as plt
-from random import sample
+from random import sample, uniform
 import seaborn as sns
 import math
 
@@ -40,8 +40,9 @@ def main(args):
     plt.imshow(grid_z, extent=[-10, 110, -3, 3], aspect='auto')
     plt.title("State Space Visualized")
 
-    n_arrows = 1000
-    sample_ind = sample(range(0, len(prev_states)), n_arrows)
+    sample_ind = range(0, len(prev_states), round(len(prev_states)/1000)) # ~1000 indexes
+    n_arrows = len(sample_ind)
+
     X = np.zeros(n_arrows)
     Y = np.zeros(n_arrows)
     U = np.zeros(n_arrows)
